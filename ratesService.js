@@ -16,7 +16,8 @@
 import * as SQLite from 'expo-sqlite';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
-const CACHE_DURATION_MS = 60 * 60 * 1000; // 1 hour
+const CACHE_DURATION_MS = 6 * 60 * 60 * 1000; // 6 hour
+const HISTORY_MAX       = 100;            // max rows kept in DB
 
 // Supported currencies
 export const CURRENCIES = ['MGA', 'USD', 'EUR', 'CNY'];
@@ -96,21 +97,31 @@ const loadRatesFromCache = () => {
 
 // ─── API fetch ────────────────────────────────────────────────────────────────
 const fetchLiveRates = async () => {
-  // Using open.er-api.com — free, no key needed
-  const response = await fetch(
-    'https://open.er-api.com/v6/latest/USD',
-    { signal: AbortSignal.timeout(8000) }
-  );
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  const data = await response.json();
+  // AbortSignal.timeout() is not supported on all Android versions,
+  // so we build a manual timeout with AbortController instead.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
 
-  // Extract only the currencies we need
-  return {
-    USD: data.rates.USD,
-    EUR: data.rates.EUR,
-    CNY: data.rates.CNY,
-    MGA: data.rates.MGA,
-  };
+  try {
+    const response = await fetch(
+      'https://open.er-api.com/v6/latest/USD',
+      { signal: controller.signal }
+    );
+    clearTimeout(timer);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+
+    // Extract only the currencies we need
+    return {
+      USD: data.rates.USD,
+      EUR: data.rates.EUR,
+      CNY: data.rates.CNY,
+      MGA: data.rates.MGA,
+    };
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
+  }
 };
 
 // ─── Main function ────────────────────────────────────────────────────────────
@@ -168,6 +179,16 @@ export const saveToHistory = (from, to, amount, result, rate) => {
     db.runSync(
       'INSERT INTO conversion_history (from_currency, to_currency, amount, result, rate) VALUES (?, ?, ?, ?, ?)',
       [from, to, amount, result, rate]
+    );
+    // Keep only the most recent HISTORY_MAX rows for storage efficiency
+    db.runSync(
+      `DELETE FROM conversion_history
+       WHERE id NOT IN (
+         SELECT id FROM conversion_history
+         ORDER BY converted_at DESC
+         LIMIT ?
+       )`,
+      [HISTORY_MAX]
     );
   } catch (e) {
     console.warn('History save failed:', e);

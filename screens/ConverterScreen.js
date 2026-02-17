@@ -63,15 +63,13 @@ function CurrencyButton({ currency, selected, onPress }) {
 
 // ─── Rate Row (the "rate board" at the bottom) ────────────────────────────────
 function RateRow({ from, to, rates, amount, rounded }) {
-  const fromInfo = CURRENCY_INFO[from];
-  const toInfo   = CURRENCY_INFO[to];
-
   if (from === to) return null;
 
-  const result = convert(amount || 1, from, to, rates);
+  const toInfo  = CURRENCY_INFO[to];
+  const result  = convert(amount || 1, from, to, rates);
   const display = amount
     ? formatAmount(result, to, rounded)
-    : formatAmount(result, to, false); // show rate when no amount
+    : formatAmount(result, to, false);
 
   return (
     <View style={styles.rateRow}>
@@ -93,17 +91,22 @@ export default function ConverterScreen({ navigation }) {
   const isDark = colorScheme === 'dark';
 
   // Core state
-  const [rates, setRates]         = useState(null);
-  const [ratesMeta, setRatesMeta] = useState({ source: null, ageMinutes: null });
-  const [loading, setLoading]     = useState(true);
+  const [rates, setRates]           = useState(null);
+  const [ratesMeta, setRatesMeta]   = useState({ source: null, ageMinutes: null });
+  const [loading, setLoading]       = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Converter state
-  const [amount, setAmount]           = useState('');
-  const [fromCurrency, setFromCurrency] = useState('USD');
-  const [toCurrency, setToCurrency]     = useState('MGA');
-  const [rounded, setRounded]           = useState(false);
-  const [snackbar, setSnackbar]         = useState('');
+  // Converter state — default: CNY → MGA as requested
+  const [amount, setAmount]               = useState('');
+  const [fromCurrency, setFromCurrency]   = useState('CNY');
+  const [toCurrency, setToCurrency]       = useState('MGA');
+  const [rounded, setRounded]             = useState(false);
+  const [snackbar, setSnackbar]           = useState('');
+
+  // Debounce timer ref — we save to history only after the user
+  // stops typing for 800 ms, so intermediate keystrokes and
+  // rate-board side-renders are NOT recorded.
+  const saveTimer = useRef(null);
 
   // Animated spin for the swap button
   const spinAnim = useRef(new Animated.Value(0)).current;
@@ -135,23 +138,35 @@ export default function ConverterScreen({ navigation }) {
 
   useEffect(() => { loadRates(); }, [loadRates]);
 
-  // ── Auto-save to history when a valid conversion happens ────────────────────
-  useEffect(() => {
-    if (!rates || !amount || isNaN(amount) || parseFloat(amount) <= 0) return;
+  // ── Save to history — debounced, only for the main conversion ───────────────
+  // We deliberately do NOT put this in a useEffect that watches `rates`,
+  // because that would fire for every rate-board row automatically.
+  // Instead we trigger it only when the user actively changes amount or
+  // currency, with an 800 ms idle wait so each "session" = 1 history entry.
+  const scheduleHistorySave = useCallback((from, to, amt, currentRates) => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    if (!currentRates || !amt || isNaN(amt) || parseFloat(amt) <= 0) return;
 
-    const result = convert(parseFloat(amount), fromCurrency, toCurrency, rates);
-    const rate   = convert(1, fromCurrency, toCurrency, rates);
-    saveToHistory(fromCurrency, toCurrency, parseFloat(amount), result, rate);
-  }, [amount, fromCurrency, toCurrency, rates]);
+    saveTimer.current = setTimeout(() => {
+      const numericAmount = parseFloat(amt);
+      const result = convert(numericAmount, from, to, currentRates);
+      const rate   = convert(1, from, to, currentRates);
+      saveToHistory(from, to, numericAmount, result, rate);
+    }, 800);
+  }, []);
+
+  // Trigger debounced save whenever the user changes amount or currency pair
+  useEffect(() => {
+    scheduleHistorySave(fromCurrency, toCurrency, amount, rates);
+    return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
+  }, [amount, fromCurrency, toCurrency, scheduleHistorySave, rates]);
 
   // ── Swap currencies ─────────────────────────────────────────────────────────
   const handleSwap = () => {
-    // Animate the swap icon
     Animated.sequence([
       Animated.timing(spinAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
       Animated.timing(spinAnim, { toValue: 0, duration: 0,   useNativeDriver: true }),
     ]).start();
-
     setFromCurrency(toCurrency);
     setToCurrency(fromCurrency);
   };
@@ -166,13 +181,16 @@ export default function ConverterScreen({ navigation }) {
     ? convert(parseFloat(amount), fromCurrency, toCurrency, rates)
     : null;
 
+  // The rate used for this pair (shown below the result)
+  const currentRate = rates ? convert(1, fromCurrency, toCurrency, rates) : null;
+
   // ── Status badge ────────────────────────────────────────────────────────────
   const sourceBadge = () => {
     if (!ratesMeta.source) return null;
     const config = {
-      live:     { icon: 'wifi',              color: '#4CAF50', label: 'Live rates'                           },
-      cache:    { icon: 'clock-outline',      color: '#FF9800', label: `Cached · ${ratesMeta.ageMinutes}m ago` },
-      fallback: { icon: 'wifi-off',           color: '#9E9E9E', label: 'Offline — fallback rates'             },
+      live:     { icon: 'wifi',         color: '#4CAF50', label: 'Live rates'                            },
+      cache:    { icon: 'clock-outline', color: '#FF9800', label: `Cached · ${ratesMeta.ageMinutes}m ago` },
+      fallback: { icon: 'wifi-off',      color: '#9E9E9E', label: 'Offline — fallback rates'              },
     }[ratesMeta.source];
 
     return (
@@ -183,7 +201,6 @@ export default function ConverterScreen({ navigation }) {
     );
   };
 
-  // ── Other currencies to show in the rate board ──────────────────────────────
   const otherCurrencies = CURRENCIES.filter(c => c !== fromCurrency);
 
   if (loading) {
@@ -224,12 +241,14 @@ export default function ConverterScreen({ navigation }) {
                 key={c}
                 currency={c}
                 selected={fromCurrency === c}
-                onPress={() => { if (c === toCurrency) setToCurrency(fromCurrency); setFromCurrency(c); }}
+                onPress={() => {
+                  if (c === toCurrency) setToCurrency(fromCurrency);
+                  setFromCurrency(c);
+                }}
               />
             ))}
           </View>
 
-          {/* Amount input */}
           <TextInput
             mode="outlined"
             label={`Amount in ${fromCurrency}`}
@@ -254,7 +273,7 @@ export default function ConverterScreen({ navigation }) {
           </TouchableOpacity>
 
           <View style={styles.roundRow}>
-            <Text style={[styles.roundLabel, isDark && styles.textDark]}>Round result</Text>
+            <Text style={[styles.roundLabel, isDark && styles.textDark]}>Round</Text>
             <Switch value={rounded} onValueChange={setRounded} />
           </View>
         </View>
@@ -268,23 +287,42 @@ export default function ConverterScreen({ navigation }) {
                 key={c}
                 currency={c}
                 selected={toCurrency === c}
-                onPress={() => { if (c === fromCurrency) setFromCurrency(toCurrency); setToCurrency(c); }}
+                onPress={() => {
+                  if (c === fromCurrency) setFromCurrency(toCurrency);
+                  setToCurrency(c);
+                }}
               />
             ))}
           </View>
 
           {/* Result display */}
-          <View style={styles.resultBox}>
+          <View style={[styles.resultBox, isDark && styles.resultBoxDark]}>
             {result !== null ? (
               <>
                 <Text style={styles.resultValue}>
                   {CURRENCY_INFO[toCurrency].symbol}{' '}
                   {formatAmount(result, toCurrency, rounded)}
                 </Text>
-                <Text style={styles.resultCurrency}>{toCurrency} · {CURRENCY_INFO[toCurrency].name}</Text>
+                <Text style={styles.resultCurrency}>
+                  {toCurrency} · {CURRENCY_INFO[toCurrency].name}
+                </Text>
+                {/* ── Rate used — answers remark #1 ── */}
+                {currentRate !== null && (
+                  <Text style={styles.rateUsed}>
+                    1 {fromCurrency} = {formatAmount(currentRate, toCurrency)} {toCurrency}
+                  </Text>
+                )}
               </>
             ) : (
-              <Text style={styles.resultPlaceholder}>Enter an amount above</Text>
+              <>
+                <Text style={styles.resultPlaceholder}>Enter an amount above</Text>
+                {/* Show rate even with no amount */}
+                {currentRate !== null && (
+                  <Text style={styles.rateUsed}>
+                    1 {fromCurrency} = {formatAmount(currentRate, toCurrency)} {toCurrency}
+                  </Text>
+                )}
+              </>
             )}
           </View>
         </Surface>
@@ -324,11 +362,7 @@ export default function ConverterScreen({ navigation }) {
 
       </ScrollView>
 
-      <Snackbar
-        visible={!!snackbar}
-        onDismiss={() => setSnackbar('')}
-        duration={2500}
-      >
+      <Snackbar visible={!!snackbar} onDismiss={() => setSnackbar('')} duration={2500}>
         {snackbar}
       </Snackbar>
     </View>
@@ -470,6 +504,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: '#f9f9f9',
   },
+  resultBoxDark: {
+    backgroundColor: '#0f0f1a',
+  },
   resultValue: {
     fontSize: 38,
     fontWeight: 'bold',
@@ -480,6 +517,13 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#999',
     marginTop: 4,
+  },
+  // Rate used — small line shown below the result
+  rateUsed: {
+    fontSize: 11,
+    color: '#bbb',
+    marginTop: 6,
+    fontStyle: 'italic',
   },
   resultPlaceholder: {
     fontSize: 16,
