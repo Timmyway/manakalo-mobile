@@ -12,7 +12,7 @@
  * - Clean, native mobile UI
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
   ScrollView,
@@ -22,7 +22,7 @@ import {
   RefreshControl,
   useColorScheme,
   Keyboard,
-} from 'react-native';
+} from "react-native";
 import {
   Text,
   TextInput,
@@ -33,7 +33,7 @@ import {
   ActivityIndicator,
   Switch,
   Snackbar,
-} from 'react-native-paper';
+} from "react-native-paper";
 
 import {
   CURRENCIES,
@@ -42,7 +42,7 @@ import {
   convert,
   formatAmount,
   saveToHistory,
-} from '../ratesService';
+} from "../ratesService";
 
 // ─── Currency Selector Button ─────────────────────────────────────────────────
 function CurrencyButton({ currency, selected, onPress }) {
@@ -54,7 +54,9 @@ function CurrencyButton({ currency, selected, onPress }) {
       activeOpacity={0.7}
     >
       <Text style={styles.currencyFlag}>{info.flag}</Text>
-      <Text style={[styles.currencyCode, selected && styles.currencyCodeSelected]}>
+      <Text
+        style={[styles.currencyCode, selected && styles.currencyCodeSelected]}
+      >
         {currency}
       </Text>
     </TouchableOpacity>
@@ -65,8 +67,8 @@ function CurrencyButton({ currency, selected, onPress }) {
 function RateRow({ from, to, rates, amount, rounded }) {
   if (from === to) return null;
 
-  const toInfo  = CURRENCY_INFO[to];
-  const result  = convert(amount || 1, from, to, rates);
+  const toInfo = CURRENCY_INFO[to];
+  const result = convert(amount || 1, from, to, rates);
   const display = amount
     ? formatAmount(result, to, rounded)
     : formatAmount(result, to, false);
@@ -88,20 +90,50 @@ function RateRow({ from, to, rates, amount, rounded }) {
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 export default function ConverterScreen({ navigation }) {
   const colorScheme = useColorScheme();
-  const isDark = colorScheme === 'dark';
+  const isDark = colorScheme === "dark";
 
   // Core state
-  const [rates, setRates]           = useState(null);
-  const [ratesMeta, setRatesMeta]   = useState({ source: null, ageMinutes: null });
-  const [loading, setLoading]       = useState(true);
+  const [rates, setRates] = useState(null);
+  const [ratesMeta, setRatesMeta] = useState({
+    source: null,
+    ageMinutes: null,
+  });
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   // Converter state — default: CNY → MGA as requested
-  const [amount, setAmount]               = useState('');
-  const [fromCurrency, setFromCurrency]   = useState('CNY');
-  const [toCurrency, setToCurrency]       = useState('MGA');
-  const [rounded, setRounded]             = useState(false);
-  const [snackbar, setSnackbar]           = useState('');
+  // `amount` holds the raw numeric string (used for all calculations)
+  // `displayAmount` holds the formatted string with thousand separators (shown in the input)
+  const [amount, setAmount] = useState("");
+  const [displayAmount, setDisplayAmount] = useState("");
+  const [fromCurrency, setFromCurrency] = useState("CNY");
+  const [toCurrency, setToCurrency] = useState("MGA");
+  const [rounded, setRounded] = useState(false);
+  const [snackbar, setSnackbar] = useState("");
+
+  // ── Thousand-separator formatter ────────────────────────────────────────────
+  // Called on every keystroke. Strips non-numeric chars, keeps one decimal
+  // point, then re-formats with commas: "1234567.8" → "1,234,567.8"
+  const handleAmountChange = (text) => {
+    // 1. Strip everything except digits and one decimal point
+    const cleaned = text.replace(/[^0-9.]/g, "");
+
+    // 2. Prevent more than one decimal point
+    const parts = cleaned.split(".");
+    const raw =
+      parts.length > 2
+        ? parts[0] + "." + parts.slice(1).join("") // collapse extra dots
+        : cleaned;
+
+    // 3. Format the integer part with commas, preserve decimal part as-is
+    const [intPart, decPart] = raw.split(".");
+    const formattedInt = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    const formatted =
+      decPart !== undefined ? formattedInt + "." + decPart : formattedInt;
+
+    setAmount(raw); // plain value for math
+    setDisplayAmount(formatted); // pretty value for display
+  };
 
   // Debounce timer ref — we save to history only after the user
   // stops typing for 800 ms, so intermediate keystrokes and
@@ -123,20 +155,22 @@ export default function ConverterScreen({ navigation }) {
 
       if (isRefresh) {
         setSnackbar(
-          source === 'live'
-            ? '✅ Rates updated!'
-            : '⚠️ Using cached rates — no internet'
+          source === "live"
+            ? "✅ Rates updated!"
+            : "⚠️ Using cached rates — no internet",
         );
       }
     } catch (e) {
-      setSnackbar('Could not load rates');
+      setSnackbar("Could not load rates");
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   }, []);
 
-  useEffect(() => { loadRates(); }, [loadRates]);
+  useEffect(() => {
+    loadRates();
+  }, [loadRates]);
 
   // ── Save to history — debounced, only for the main conversion ───────────────
   // We deliberately do NOT put this in a useEffect that watches `rates`,
@@ -150,7 +184,7 @@ export default function ConverterScreen({ navigation }) {
     saveTimer.current = setTimeout(() => {
       const numericAmount = parseFloat(amt);
       const result = convert(numericAmount, from, to, currentRates);
-      const rate   = convert(1, from, to, currentRates);
+      const rate = convert(1, from, to, currentRates);
       saveToHistory(from, to, numericAmount, result, rate);
     }, 800);
   }, []);
@@ -158,14 +192,24 @@ export default function ConverterScreen({ navigation }) {
   // Trigger debounced save whenever the user changes amount or currency pair
   useEffect(() => {
     scheduleHistorySave(fromCurrency, toCurrency, amount, rates);
-    return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
   }, [amount, fromCurrency, toCurrency, scheduleHistorySave, rates]);
 
   // ── Swap currencies ─────────────────────────────────────────────────────────
   const handleSwap = () => {
     Animated.sequence([
-      Animated.timing(spinAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
-      Animated.timing(spinAnim, { toValue: 0, duration: 0,   useNativeDriver: true }),
+      Animated.timing(spinAnim, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: true,
+      }),
+      Animated.timing(spinAnim, {
+        toValue: 0,
+        duration: 0,
+        useNativeDriver: true,
+      }),
     ]).start();
     setFromCurrency(toCurrency);
     setToCurrency(fromCurrency);
@@ -173,41 +217,57 @@ export default function ConverterScreen({ navigation }) {
 
   const spinDeg = spinAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: ['0deg', '180deg'],
+    outputRange: ["0deg", "180deg"],
   });
 
   // ── Computed result ─────────────────────────────────────────────────────────
-  const result = rates && amount && !isNaN(amount)
-    ? convert(parseFloat(amount), fromCurrency, toCurrency, rates)
-    : null;
+  const result =
+    rates && amount && !isNaN(amount)
+      ? convert(parseFloat(amount), fromCurrency, toCurrency, rates)
+      : null;
 
   // The rate used for this pair (shown below the result)
-  const currentRate = rates ? convert(1, fromCurrency, toCurrency, rates) : null;
+  const currentRate = rates
+    ? convert(1, fromCurrency, toCurrency, rates)
+    : null;
 
   // ── Status badge ────────────────────────────────────────────────────────────
   const sourceBadge = () => {
     if (!ratesMeta.source) return null;
     const config = {
-      live:     { icon: 'wifi',         color: '#4CAF50', label: 'Live rates'                            },
-      cache:    { icon: 'clock-outline', color: '#FF9800', label: `Cached · ${ratesMeta.ageMinutes}m ago` },
-      fallback: { icon: 'wifi-off',      color: '#9E9E9E', label: 'Offline — fallback rates'              },
+      live: { icon: "wifi", color: "#4CAF50", label: "Live rates" },
+      cache: {
+        icon: "clock-outline",
+        color: "#FF9800",
+        label: `Cached · ${ratesMeta.ageMinutes}m ago`,
+      },
+      fallback: {
+        icon: "wifi-off",
+        color: "#9E9E9E",
+        label: "Offline — fallback rates",
+      },
     }[ratesMeta.source];
 
     return (
-      <Chip icon={config.icon} style={[styles.badge, { borderColor: config.color }]}
-            textStyle={{ color: config.color, fontSize: 11 }}>
+      <Chip
+        icon={config.icon}
+        style={[styles.badge, { borderColor: config.color }]}
+        textStyle={{ color: config.color, fontSize: 11 }}
+      >
         {config.label}
       </Chip>
     );
   };
 
-  const otherCurrencies = CURRENCIES.filter(c => c !== fromCurrency);
+  const otherCurrencies = CURRENCIES.filter((c) => c !== fromCurrency);
 
   if (loading) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" />
-        <Text style={{ marginTop: 12, color: '#999' }}>Fetching exchange rates…</Text>
+        <Text style={{ marginTop: 12, color: "#999" }}>
+          Fetching exchange rates…
+        </Text>
       </View>
     );
   }
@@ -217,7 +277,10 @@ export default function ConverterScreen({ navigation }) {
       <ScrollView
         keyboardShouldPersistTaps="handled"
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={() => loadRates(true)} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => loadRates(true)}
+          />
         }
         contentContainerStyle={styles.scroll}
       >
@@ -227,8 +290,11 @@ export default function ConverterScreen({ navigation }) {
           <IconButton
             icon="history"
             size={22}
-            iconColor={isDark ? '#aaa' : '#555'}
-            onPress={() => { Keyboard.dismiss(); navigation.navigate('History'); }}
+            iconColor={isDark ? "#aaa" : "#555"}
+            onPress={() => {
+              Keyboard.dismiss();
+              navigation.navigate("History");
+            }}
           />
         </View>
 
@@ -236,7 +302,7 @@ export default function ConverterScreen({ navigation }) {
         <Surface style={[styles.card, isDark && styles.cardDark]} elevation={2}>
           <Text style={styles.sectionLabel}>FROM</Text>
           <View style={styles.currencyRow}>
-            {CURRENCIES.map(c => (
+            {CURRENCIES.map((c) => (
               <CurrencyButton
                 key={c}
                 currency={c}
@@ -249,31 +315,39 @@ export default function ConverterScreen({ navigation }) {
             ))}
           </View>
 
-          <TextInput
-            mode="outlined"
+          <TextInput            
             label={`Amount in ${fromCurrency}`}
-            value={amount}
-            onChangeText={setAmount}
+            value={displayAmount}
+            onChangeText={handleAmountChange}
             keyboardType="decimal-pad"
             placeholder="0"
             left={<TextInput.Affix text={CURRENCY_INFO[fromCurrency].symbol} />}
             style={styles.amountInput}
             returnKeyType="done"
             onSubmitEditing={Keyboard.dismiss}
+            theme={{ colors: { background: isDark ? "#1a1a2e" : "#ffffff" } }}
           />
         </Surface>
 
         {/* ── Swap + Round row ─────────────────────────────────────────── */}
         <View style={styles.controlsRow}>
-          <TouchableOpacity onPress={handleSwap} style={styles.swapBtn} activeOpacity={0.7}>
-            <Animated.Text style={[styles.swapIcon, { transform: [{ rotate: spinDeg }] }]}>
+          <TouchableOpacity
+            onPress={handleSwap}
+            style={styles.swapBtn}
+            activeOpacity={0.7}
+          >
+            <Animated.Text
+              style={[styles.swapIcon, { transform: [{ rotate: spinDeg }] }]}
+            >
               ⇄
             </Animated.Text>
             <Text style={styles.swapLabel}>Swap</Text>
           </TouchableOpacity>
 
           <View style={styles.roundRow}>
-            <Text style={[styles.roundLabel, isDark && styles.textDark]}>Round</Text>
+            <Text style={[styles.roundLabel, isDark && styles.textDark]}>
+              Round
+            </Text>
             <Switch value={rounded} onValueChange={setRounded} />
           </View>
         </View>
@@ -282,7 +356,7 @@ export default function ConverterScreen({ navigation }) {
         <Surface style={[styles.card, isDark && styles.cardDark]} elevation={2}>
           <Text style={styles.sectionLabel}>TO</Text>
           <View style={styles.currencyRow}>
-            {CURRENCIES.map(c => (
+            {CURRENCIES.map((c) => (
               <CurrencyButton
                 key={c}
                 currency={c}
@@ -300,7 +374,7 @@ export default function ConverterScreen({ navigation }) {
             {result !== null ? (
               <>
                 <Text style={styles.resultValue}>
-                  {CURRENCY_INFO[toCurrency].symbol}{' '}
+                  {CURRENCY_INFO[toCurrency].symbol}{" "}
                   {formatAmount(result, toCurrency, rounded)}
                 </Text>
                 <Text style={styles.resultCurrency}>
@@ -309,17 +383,21 @@ export default function ConverterScreen({ navigation }) {
                 {/* ── Rate used — answers remark #1 ── */}
                 {currentRate !== null && (
                   <Text style={styles.rateUsed}>
-                    1 {fromCurrency} = {formatAmount(currentRate, toCurrency)} {toCurrency}
+                    1 {fromCurrency} = {formatAmount(currentRate, toCurrency)}{" "}
+                    {toCurrency}
                   </Text>
                 )}
               </>
             ) : (
               <>
-                <Text style={styles.resultPlaceholder}>Enter an amount above</Text>
+                <Text style={styles.resultPlaceholder}>
+                  Enter an amount above
+                </Text>
                 {/* Show rate even with no amount */}
                 {currentRate !== null && (
                   <Text style={styles.rateUsed}>
-                    1 {fromCurrency} = {formatAmount(currentRate, toCurrency)} {toCurrency}
+                    1 {fromCurrency} = {formatAmount(currentRate, toCurrency)}{" "}
+                    {toCurrency}
                   </Text>
                 )}
               </>
@@ -330,10 +408,12 @@ export default function ConverterScreen({ navigation }) {
         {/* ── Rate board ────────────────────────────────────────────────── */}
         <Surface style={[styles.card, isDark && styles.cardDark]} elevation={1}>
           <Text style={styles.sectionLabel}>
-            {amount ? `${amount} ${fromCurrency} equals` : `1 ${fromCurrency} equals`}
+            {amount
+              ? `${displayAmount} ${fromCurrency} equals`
+              : `1 ${fromCurrency} equals`}
           </Text>
           <Divider style={{ marginBottom: 8 }} />
-          {otherCurrencies.map(c => (
+          {otherCurrencies.map((c) => (
             <RateRow
               key={c}
               from={fromCurrency}
@@ -347,22 +427,33 @@ export default function ConverterScreen({ navigation }) {
 
         {/* ── Quick amounts ─────────────────────────────────────────────── */}
         <View style={styles.quickRow}>
-          {[10, 50, 100, 500, 1000].map(v => (
+          {[10, 50, 100, 500, 1000].map((v) => (
             <TouchableOpacity
               key={v}
-              onPress={() => setAmount(String(v))}
-              style={[styles.quickBtn, amount === String(v) && styles.quickBtnActive]}
+              onPress={() => handleAmountChange(String(v))}
+              style={[
+                styles.quickBtn,
+                amount === String(v) && styles.quickBtnActive,
+              ]}
             >
-              <Text style={[styles.quickBtnText, amount === String(v) && styles.quickBtnTextActive]}>
+              <Text
+                style={[
+                  styles.quickBtnText,
+                  amount === String(v) && styles.quickBtnTextActive,
+                ]}
+              >
                 {v}
               </Text>
             </TouchableOpacity>
           ))}
         </View>
-
       </ScrollView>
 
-      <Snackbar visible={!!snackbar} onDismiss={() => setSnackbar('')} duration={2500}>
+      <Snackbar
+        visible={!!snackbar}
+        onDismiss={() => setSnackbar("")}
+        duration={2500}
+      >
         {snackbar}
       </Snackbar>
     </View>
@@ -373,15 +464,15 @@ export default function ConverterScreen({ navigation }) {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: '#f4f4f8',
+    backgroundColor: "#f4f4f8",
   },
   rootDark: {
-    backgroundColor: '#0f0f1a',
+    backgroundColor: "#0f0f1a",
   },
   centered: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
   },
   scroll: {
     padding: 16,
@@ -390,14 +481,14 @@ const styles = StyleSheet.create({
 
   // Badge
   badgeRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: 8,
   },
   badge: {
     borderWidth: 1,
-    backgroundColor: 'transparent',
+    backgroundColor: "transparent",
   },
 
   // Cards
@@ -407,36 +498,36 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   cardDark: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: "#1a1a2e",
   },
   sectionLabel: {
     fontSize: 11,
-    fontWeight: '700',
+    fontWeight: "700",
     letterSpacing: 1.5,
-    color: '#999',
+    color: "#999",
     marginBottom: 10,
-    textTransform: 'uppercase',
+    textTransform: "uppercase",
   },
 
   // Currency selector buttons
   currencyRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    justifyContent: "space-between",
     marginBottom: 14,
     gap: 6,
   },
   currencyBtn: {
     flex: 1,
-    alignItems: 'center',
+    alignItems: "center",
     paddingVertical: 10,
     borderRadius: 12,
     borderWidth: 1.5,
-    borderColor: '#ddd',
-    backgroundColor: '#fff',
+    borderColor: "#ddd",
+    backgroundColor: "#fff",
   },
   currencyBtnSelected: {
-    borderColor: '#E8352B',
-    backgroundColor: '#fff0ef',
+    borderColor: "#E8352B",
+    backgroundColor: "#fff0ef",
   },
   currencyFlag: {
     fontSize: 22,
@@ -444,105 +535,108 @@ const styles = StyleSheet.create({
   },
   currencyCode: {
     fontSize: 11,
-    fontWeight: '700',
-    color: '#555',
+    fontWeight: "700",
+    color: "#555",
   },
   currencyCodeSelected: {
-    color: '#E8352B',
+    color: "#E8352B",
   },
 
-  // Amount input
+  // Amount input — extra top margin so the floating label isn't clipped
   amountInput: {
-    backgroundColor: 'transparent',
+    backgroundColor: "transparent",
+    marginTop: 8,    
+    fontSize: 25,
+    paddingLeft: 6,
   },
 
   // Swap + round row
   controlsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: 12,
     paddingHorizontal: 4,
   },
   swapBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 6,
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 20,
-    backgroundColor: '#E8352B',
+    backgroundColor: "#E8352B",
   },
   swapIcon: {
     fontSize: 20,
-    color: '#fff',
-    fontWeight: 'bold',
+    color: "#fff",
+    fontWeight: "bold",
   },
   swapLabel: {
-    color: '#fff',
-    fontWeight: '600',
+    color: "#fff",
+    fontWeight: "600",
     fontSize: 14,
   },
   roundRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 8,
   },
   roundLabel: {
     fontSize: 14,
-    color: '#555',
+    color: "#555",
   },
   textDark: {
-    color: '#bbb',
+    color: "#bbb",
   },
 
   // Result
   resultBox: {
     marginTop: 8,
-    alignItems: 'center',
+    alignItems: "center",
     paddingVertical: 16,
     borderRadius: 12,
-    backgroundColor: '#f9f9f9',
+    backgroundColor: "#f9f9f9",
   },
   resultBoxDark: {
-    backgroundColor: '#0f0f1a',
+    backgroundColor: "#0f0f1a",
   },
   resultValue: {
     fontSize: 38,
-    fontWeight: 'bold',
-    color: '#E8352B',
+    fontWeight: "bold",
+    color: "#E8352B",
     letterSpacing: -0.5,
   },
   resultCurrency: {
     fontSize: 13,
-    color: '#999',
+    color: "#999",
     marginTop: 4,
   },
   // Rate used — small line shown below the result
   rateUsed: {
     fontSize: 11,
-    color: '#bbb',
+    color: "#bbb",
     marginTop: 6,
-    fontStyle: 'italic',
+    fontStyle: "italic",
   },
   resultPlaceholder: {
     fontSize: 16,
-    color: '#bbb',
-    fontStyle: 'italic',
+    color: "#bbb",
+    fontStyle: "italic",
   },
 
   // Rate board
   rateRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#eee',
+    borderBottomColor: "#eee",
   },
   rateRowLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 8,
   },
   rateFlag: {
@@ -550,48 +644,48 @@ const styles = StyleSheet.create({
   },
   rateCode: {
     fontSize: 14,
-    fontWeight: '700',
-    color: '#333',
+    fontWeight: "700",
+    color: "#333",
     width: 36,
   },
   rateName: {
     fontSize: 12,
-    color: '#999',
+    color: "#999",
   },
   rateValue: {
     fontSize: 13,
-    fontWeight: '600',
-    color: '#333',
+    fontWeight: "600",
+    color: "#333",
     flexShrink: 1,
-    textAlign: 'right',
+    textAlign: "right",
   },
 
   // Quick amounts
   quickRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    justifyContent: "space-between",
     gap: 6,
     marginTop: 4,
   },
   quickBtn: {
     flex: 1,
-    alignItems: 'center',
+    alignItems: "center",
     paddingVertical: 10,
     borderRadius: 10,
     borderWidth: 1.5,
-    borderColor: '#ddd',
-    backgroundColor: '#fff',
+    borderColor: "#ddd",
+    backgroundColor: "#fff",
   },
   quickBtnActive: {
-    borderColor: '#E8352B',
-    backgroundColor: '#fff0ef',
+    borderColor: "#E8352B",
+    backgroundColor: "#fff0ef",
   },
   quickBtnText: {
-    fontWeight: '600',
+    fontWeight: "600",
     fontSize: 13,
-    color: '#555',
+    color: "#555",
   },
   quickBtnTextActive: {
-    color: '#E8352B',
+    color: "#E8352B",
   },
 });
